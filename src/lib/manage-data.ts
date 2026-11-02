@@ -137,7 +137,7 @@ export type RegistrationReportRow = {
 
 export async function getRegistrationReport(departmentId?: number, limit = 200): Promise<RegistrationReportRow[]> {
   const clause = departmentId ? sql`AND d.id = ${departmentId}` : sql``;
-  const query = await db.execute(sql`
+  const [rows] = await db.execute(sql`
     SELECT r.id, u.full_name AS student, s.matric_number, d.name AS department,
       c.code AS course_code, c.title AS course_title, c.units, c.level,
       ses.name AS session, sem.name AS semester, r.registered_at
@@ -152,7 +152,12 @@ export async function getRegistrationReport(departmentId?: number, limit = 200):
     ORDER BY ses.name DESC, sem.number, c.code, s.matric_number
     LIMIT ${limit}
   `);
-  return query.rows as unknown as RegistrationReportRow[];
+  return ((rows as unknown as any[]) ?? []).map((r) => ({
+    ...r,
+    id: Number(r.id),
+    units: Number(r.units),
+    level: Number(r.level),
+  })) as RegistrationReportRow[];
 }
 
 export type PerformanceReportRow = {
@@ -163,14 +168,14 @@ export type PerformanceReportRow = {
 
 export async function getPerformanceReport(departmentId?: number): Promise<PerformanceReportRow[]> {
   const clause = departmentId ? sql`AND d.id = ${departmentId}` : sql``;
-  const query = await db.execute(sql`
+  const [rows] = await db.execute(sql`
     SELECT d.name AS department, c.code AS course_code, c.title AS course_title, c.units,
       ses.name AS session, sem.name AS semester,
-      COUNT(res.id)::int AS approved,
-      COALESCE(AVG(res.total_score)::int, 0) AS average,
-      COUNT(CASE WHEN res.total_score >= 40 THEN 1 END)::int AS passes,
-      COUNT(CASE WHEN res.total_score < 40 THEN 1 END)::int AS fails,
-      COALESCE((100.0 * COUNT(CASE WHEN res.total_score >= 40 THEN 1 END) / NULLIF(COUNT(res.id), 0))::int, 0) AS pass_rate
+      COUNT(res.id) AS approved,
+      COALESCE(ROUND(AVG(res.total_score)), 0) AS average,
+      COUNT(CASE WHEN res.total_score >= 40 THEN 1 END) AS passes,
+      COUNT(CASE WHEN res.total_score < 40 THEN 1 END) AS fails,
+      COALESCE(ROUND(100.0 * COUNT(CASE WHEN res.total_score >= 40 THEN 1 END) / NULLIF(COUNT(res.id), 0)), 0) AS pass_rate
     FROM results res
     JOIN courses c ON c.id = res.course_id
     JOIN departments d ON d.id = c.department_id
@@ -180,24 +185,41 @@ export async function getPerformanceReport(departmentId?: number): Promise<Perfo
     GROUP BY d.name, c.code, c.title, c.units, ses.name, sem.name
     ORDER BY d.name, ses.name DESC, sem.name, c.code
   `);
-  return query.rows as unknown as PerformanceReportRow[];
+  return ((rows as unknown as any[]) ?? []).map((r) => ({
+    department: r.department,
+    course_code: r.course_code,
+    course_title: r.course_title,
+    units: Number(r.units),
+    session: r.session,
+    semester: r.semester,
+    approved: Number(r.approved || 0),
+    average: Number(r.average || 0),
+    passes: Number(r.passes || 0),
+    fails: Number(r.fails || 0),
+    pass_rate: Number(r.pass_rate || 0),
+  }));
 }
 
 export async function getDepartmentBreakdown() {
-  const query = await db.execute(sql`
+  const [rows] = await db.execute(sql`
     SELECT d.name AS department, f.name AS faculty,
-      (SELECT COUNT(*)::int FROM students s WHERE s.department_id = d.id) AS students,
-      (SELECT COUNT(*)::int FROM lecturers l WHERE l.department_id = d.id) AS lecturers,
-      (SELECT COUNT(*)::int FROM courses c WHERE c.department_id = d.id) AS courses,
-      (SELECT COUNT(*)::int FROM registrations r JOIN courses c ON c.id = r.course_id WHERE c.department_id = d.id) AS registrations,
-      (SELECT COUNT(*)::int FROM result_submissions rs WHERE rs.department_id = d.id AND rs.status = 'submitted') AS pending
+      (SELECT COUNT(*) FROM students s WHERE s.department_id = d.id) AS students,
+      (SELECT COUNT(*) FROM lecturers l WHERE l.department_id = d.id) AS lecturers,
+      (SELECT COUNT(*) FROM courses c WHERE c.department_id = d.id) AS courses,
+      (SELECT COUNT(*) FROM registrations r JOIN courses c ON c.id = r.course_id WHERE c.department_id = d.id) AS registrations,
+      (SELECT COUNT(*) FROM result_submissions rs WHERE rs.department_id = d.id AND rs.status = 'submitted') AS pending
     FROM departments d JOIN faculties f ON f.id = d.faculty_id
     ORDER BY d.name
   `);
-  return query.rows as unknown as {
-    department: string; faculty: string; students: number; lecturers: number;
-    courses: number; registrations: number; pending: number;
-  }[];
+  return ((rows as unknown as any[]) ?? []).map((r) => ({
+    department: r.department,
+    faculty: r.faculty,
+    students: Number(r.students || 0),
+    lecturers: Number(r.lecturers || 0),
+    courses: Number(r.courses || 0),
+    registrations: Number(r.registrations || 0),
+    pending: Number(r.pending || 0),
+  }));
 }
 
 export async function getGradeBands() {
@@ -206,9 +228,9 @@ export async function getGradeBands() {
 
 export async function getCourseRegistrationCounts(departmentId?: number) {
   const clause = departmentId ? sql`AND c.department_id = ${departmentId}` : sql``;
-  const query = await db.execute(sql`
+  const [rows] = await db.execute(sql`
     SELECT c.code AS course_code, c.title AS course_title, c.units,
-      COUNT(r.id)::int AS registrations, d.name AS department
+      COUNT(r.id) AS registrations, d.name AS department
     FROM courses c
     LEFT JOIN registrations r ON r.course_id = c.id
     JOIN departments d ON d.id = c.department_id
@@ -216,7 +238,11 @@ export async function getCourseRegistrationCounts(departmentId?: number) {
     GROUP BY c.code, c.title, c.units, d.name
     ORDER BY registrations DESC, c.code
   `);
-  return query.rows as unknown as {
-    course_code: string; course_title: string; units: number; registrations: number; department: string;
-  }[];
+  return ((rows as unknown as any[]) ?? []).map((r) => ({
+    course_code: r.course_code,
+    course_title: r.course_title,
+    units: Number(r.units),
+    registrations: Number(r.registrations || 0),
+    department: r.department,
+  }));
 }

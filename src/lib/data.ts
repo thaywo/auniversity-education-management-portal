@@ -168,15 +168,15 @@ export type LecturerCourse = {
 };
 
 export async function getLecturerCourses(lecturerId: number, sessionId: number): Promise<LecturerCourse[]> {
-  const query = await db.execute(sql`
+  const [rows] = await db.execute(sql`
     SELECT c.id, c.code, c.title, c.units, c.level, s.name AS semester_name,
       d.name AS department_name, c.session_id,
       rs.id AS submission_id, COALESCE(rs.status, 'draft') AS submission_status,
       rs.feedback, rs.submitted_at, rs.reviewed_at,
-      COUNT(DISTINCT r.id)::int AS student_count,
-      COUNT(DISTINCT CASE WHEN res.status = 'approved' THEN res.id END)::int AS approved_count,
-      COUNT(DISTINCT CASE WHEN res.total_score >= 40 THEN res.id END)::int AS pass_count,
-      ROUND(AVG(res.total_score))::int AS average_score
+      COUNT(DISTINCT r.id) AS student_count,
+      COUNT(DISTINCT CASE WHEN res.status = 'approved' THEN res.id END) AS approved_count,
+      COUNT(DISTINCT CASE WHEN res.total_score >= 40 THEN res.id END) AS pass_count,
+      ROUND(AVG(res.total_score)) AS average_score
     FROM course_allocations ca
     JOIN courses c ON c.id = ca.course_id
     JOIN departments d ON d.id = c.department_id
@@ -189,7 +189,17 @@ export async function getLecturerCourses(lecturerId: number, sessionId: number):
       rs.id, rs.status, rs.feedback, rs.submitted_at, rs.reviewed_at
     ORDER BY c.code
   `);
-  return query.rows as unknown as LecturerCourse[];
+  return (((rows as unknown as any[]) ?? [])).map((r) => ({
+    ...r,
+    units: Number(r.units),
+    level: Number(r.level),
+    session_id: Number(r.session_id),
+    submission_id: r.submission_id ? Number(r.submission_id) : null,
+    student_count: Number(r.student_count || 0),
+    approved_count: Number(r.approved_count || 0),
+    pass_count: Number(r.pass_count || 0),
+    average_score: r.average_score !== null ? Number(r.average_score) : null,
+  })) as LecturerCourse[];
 }
 
 export type RosterRow = {
@@ -232,7 +242,7 @@ export async function getSubmissions(departmentId?: number): Promise<SubmissionV
     status: resultSubmissions.status, feedback: resultSubmissions.feedback,
     submittedAt: resultSubmissions.submittedAt, reviewedAt: resultSubmissions.reviewedAt,
     reviewer: sql<string | null>`(SELECT u.full_name FROM users u WHERE u.id = ${resultSubmissions.reviewedBy})`,
-    studentCount: sql<number>`(SELECT COUNT(*)::int FROM results r WHERE r.course_id = ${resultSubmissions.courseId})`,
+    studentCount: sql<number>`(SELECT COUNT(*) FROM results r WHERE r.course_id = ${resultSubmissions.courseId})`,
   }).from(resultSubmissions)
     .innerJoin(courses, eq(resultSubmissions.courseId, courses.id))
     .innerJoin(departments, eq(resultSubmissions.departmentId, departments.id))
@@ -268,40 +278,54 @@ export async function getAuditTrail(departmentId?: number, limit = 80): Promise<
 }
 
 export async function getOverviewCounts() {
-  const query = await db.execute(sql`
+  const [rows] = (await db.execute(sql`
     SELECT
-      (SELECT COUNT(*)::int FROM users) AS users,
-      (SELECT COUNT(*)::int FROM students) AS students,
-      (SELECT COUNT(*)::int FROM lecturers) AS lecturers,
-      (SELECT COUNT(*)::int FROM faculties WHERE is_active) AS faculties,
-      (SELECT COUNT(*)::int FROM departments WHERE is_active) AS departments,
-      (SELECT COUNT(*)::int FROM programs WHERE is_active) AS programs,
-      (SELECT COUNT(*)::int FROM courses WHERE is_active) AS courses,
-      (SELECT COUNT(*)::int FROM registrations) AS registrations,
-      (SELECT COUNT(*)::int FROM results WHERE status = 'approved') AS approved_results,
-      (SELECT COUNT(*)::int FROM result_submissions WHERE status = 'submitted') AS pending_approvals,
-      (SELECT COUNT(*)::int FROM result_submissions WHERE status = 'returned') AS returned_results
-  `);
-  return query.rows[0] as unknown as {
-    users: number; students: number; lecturers: number; faculties: number;
-    departments: number; programs: number; courses: number; registrations: number;
-    approved_results: number; pending_approvals: number; returned_results: number;
+      (SELECT COUNT(*) FROM users) AS users,
+      (SELECT COUNT(*) FROM students) AS students,
+      (SELECT COUNT(*) FROM lecturers) AS lecturers,
+      (SELECT COUNT(*) FROM faculties WHERE is_active = 1) AS faculties,
+      (SELECT COUNT(*) FROM departments WHERE is_active = 1) AS departments,
+      (SELECT COUNT(*) FROM programs WHERE is_active = 1) AS programs,
+      (SELECT COUNT(*) FROM courses WHERE is_active = 1) AS courses,
+      (SELECT COUNT(*) FROM registrations) AS registrations,
+      (SELECT COUNT(*) FROM results WHERE status = 'approved') AS approved_results,
+      (SELECT COUNT(*) FROM result_submissions WHERE status = 'submitted') AS pending_approvals,
+      (SELECT COUNT(*) FROM result_submissions WHERE status = 'returned') AS returned_results
+  `)) as unknown as [any[]];
+  const row = rows?.[0] ?? {};
+  return {
+    users: Number(row.users || 0),
+    students: Number(row.students || 0),
+    lecturers: Number(row.lecturers || 0),
+    faculties: Number(row.faculties || 0),
+    departments: Number(row.departments || 0),
+    programs: Number(row.programs || 0),
+    courses: Number(row.courses || 0),
+    registrations: Number(row.registrations || 0),
+    approved_results: Number(row.approved_results || 0),
+    pending_approvals: Number(row.pending_approvals || 0),
+    returned_results: Number(row.returned_results || 0),
   };
 }
 
 export async function getDepartmentCounts(departmentId: number) {
-  const query = await db.execute(sql`
+  const [rows] = (await db.execute(sql`
     SELECT
-      (SELECT COUNT(*)::int FROM students WHERE department_id = ${departmentId}) AS students,
-      (SELECT COUNT(*)::int FROM lecturers WHERE department_id = ${departmentId}) AS lecturers,
-      (SELECT COUNT(*)::int FROM courses WHERE department_id = ${departmentId} AND is_active) AS courses,
-      (SELECT COUNT(*)::int FROM registrations r JOIN courses c ON c.id = r.course_id WHERE c.department_id = ${departmentId}) AS registrations,
-      (SELECT COUNT(*)::int FROM result_submissions WHERE department_id = ${departmentId} AND status = 'submitted') AS pending_approvals,
-      (SELECT COUNT(*)::int FROM result_submissions WHERE department_id = ${departmentId} AND status = 'approved') AS approved_results
-  `);
-  return query.rows[0] as unknown as {
-    students: number; lecturers: number; courses: number; registrations: number;
-    pending_approvals: number; approved_results: number;
+      (SELECT COUNT(*) FROM students WHERE department_id = ${departmentId}) AS students,
+      (SELECT COUNT(*) FROM lecturers WHERE department_id = ${departmentId}) AS lecturers,
+      (SELECT COUNT(*) FROM courses WHERE department_id = ${departmentId} AND is_active = 1) AS courses,
+      (SELECT COUNT(*) FROM registrations r JOIN courses c ON c.id = r.course_id WHERE c.department_id = ${departmentId}) AS registrations,
+      (SELECT COUNT(*) FROM result_submissions WHERE department_id = ${departmentId} AND status = 'submitted') AS pending_approvals,
+      (SELECT COUNT(*) FROM result_submissions WHERE department_id = ${departmentId} AND status = 'approved') AS approved_results
+  `)) as unknown as [any[]];
+  const row = rows?.[0] ?? {};
+  return {
+    students: Number(row.students || 0),
+    lecturers: Number(row.lecturers || 0),
+    courses: Number(row.courses || 0),
+    registrations: Number(row.registrations || 0),
+    pending_approvals: Number(row.pending_approvals || 0),
+    approved_results: Number(row.approved_results || 0),
   };
 }
 

@@ -141,9 +141,9 @@ export async function registerCourses(form: FormData): Promise<ActionResult> {
     const addedUnits = available.reduce((sum, row) => sum + row.units, 0);
     if (currentUnits + addedUnits > 24) throw new Error(`Credit limit exceeded: the maximum is 24 units per semester (current ${currentUnits}, requested ${addedUnits}).`);
 
-    await db.insert(registrations).values(newIds.map((courseId) => ({
+    await db.insert(registrations).ignore().values(newIds.map((courseId) => ({
       studentId: student.studentId, courseId, sessionId: term.session.id, semesterId: term.semester.id,
-    }))).onConflictDoNothing();
+    })));
     await audit(user, "COURSES_REGISTERED", "registration", null,
       { courses: available.map((c) => c.code), units: addedUnits, session: term.session.name }, student.departmentId);
   });
@@ -240,7 +240,7 @@ export async function saveResultScores(
           enteredBy: user.id, approvedBy: null, approvedAt: null,
           submittedAt: mode === "submit" ? now : null, updatedAt: now,
         };
-        await tx.insert(results).values(values).onConflictDoUpdate({ target: results.registrationId, set: values });
+        await tx.insert(results).values(values).onDuplicateKeyUpdate({ set: values });
       }
       if (mode === "submit") {
         // Make sure results saved in an earlier draft are also marked submitted.
@@ -323,7 +323,7 @@ export async function createFaculty(form: FormData): Promise<ActionResult> {
     const code = text(form, "code", true, 20).toUpperCase();
     const existing = await db.select({ id: faculties.id }).from(faculties).where(eq(faculties.code, code)).limit(1);
     if (existing.length) throw new Error("A faculty with this code already exists.");
-    const [created] = await db.insert(faculties).values({ name, code }).returning();
+    const [created] = await db.insert(faculties).values({ name, code }).$returningId();
     await audit(user, "FACULTY_CREATED", "faculty", created.id, { name, code });
   });
 }
@@ -349,7 +349,7 @@ export async function createDepartment(form: FormData): Promise<ActionResult> {
     const facultyId = integer(form, "facultyId", 1);
     const existing = await db.select({ id: departments.id }).from(departments).where(eq(departments.code, code)).limit(1);
     if (existing.length) throw new Error("A department with this code already exists.");
-    const [created] = await db.insert(departments).values({ name, code, facultyId }).returning();
+    const [created] = await db.insert(departments).values({ name, code, facultyId }).$returningId();
     await db.insert(academicLevels).values([100, 200, 300, 400, 500].map((level) => ({
       departmentId: created.id, level, name: `${level} Level`,
     })));
@@ -376,7 +376,7 @@ export async function createSession(form: FormData): Promise<ActionResult> {
     const name = text(form, "name", true, 30);
     const existing = await db.select({ id: academicSessions.id }).from(academicSessions).where(eq(academicSessions.name, name)).limit(1);
     if (existing.length) throw new Error("This academic session already exists.");
-    const [created] = await db.insert(academicSessions).values({ name }).returning();
+    const [created] = await db.insert(academicSessions).values({ name }).$returningId();
     await db.insert(semesters).values([
       { sessionId: created.id, name: "First Semester", number: 1 },
       { sessionId: created.id, name: "Second Semester", number: 2 },
@@ -423,7 +423,7 @@ export async function createSemester(form: FormData): Promise<ActionResult> {
     const existing = await db.select({ id: semesters.id }).from(semesters)
       .where(and(eq(semesters.sessionId, sessionId), eq(semesters.number, number))).limit(1);
     if (existing.length) throw new Error("This semester number already exists for the session.");
-    const [created] = await db.insert(semesters).values({ sessionId, name, number }).returning();
+    const [created] = await db.insert(semesters).values({ sessionId, name, number }).$returningId();
     await audit(user, "SEMESTER_CREATED", "semester", created.id, { sessionId, name, number });
   });
 }
@@ -471,7 +471,7 @@ export async function createProgram(form: FormData): Promise<ActionResult> {
     const existing = await db.select({ id: programs.id }).from(programs)
       .where(and(eq(programs.departmentId, departmentId), eq(programs.code, code))).limit(1);
     if (existing.length) throw new Error("A program with this code already exists in the department.");
-    const [created] = await db.insert(programs).values({ departmentId, name, code, degree, durationYears }).returning();
+    const [created] = await db.insert(programs).values({ departmentId, name, code, degree, durationYears }).$returningId();
     await audit(user, "PROGRAM_CREATED", "program", created.id, { name, code, departmentId }, departmentId);
   });
 }
@@ -499,7 +499,7 @@ export async function createLevel(form: FormData): Promise<ActionResult> {
     const existing = await db.select({ id: academicLevels.id }).from(academicLevels)
       .where(and(eq(academicLevels.departmentId, departmentId), eq(academicLevels.level, level))).limit(1);
     if (existing.length) throw new Error("This level already exists in the department.");
-    const [created] = await db.insert(academicLevels).values({ departmentId, level, name }).returning();
+    const [created] = await db.insert(academicLevels).values({ departmentId, level, name }).$returningId();
     await audit(user, "LEVEL_CREATED", "academic_level", created.id, { level, name }, departmentId);
   });
 }
@@ -538,7 +538,7 @@ export async function createCourse(form: FormData): Promise<ActionResult> {
     if (existing.length) throw new Error("Duplicate course: this code already exists for the department and term.");
     const [created] = await db.insert(courses).values({
       code, title, units, level, departmentId, programId, semesterId, sessionId,
-    }).returning();
+    }).$returningId();
     await audit(user, "COURSE_CREATED", "course", created.id, { code, title, units, level, sessionId, semesterId }, departmentId);
   });
 }
@@ -602,7 +602,7 @@ export async function createStudent(form: FormData): Promise<ActionResult> {
     const [created] = await db.insert(users).values({
       email, fullName, role: "student", status: "active", departmentId,
       passwordHash: hashPassword(password),
-    }).returning();
+    }).$returningId();
     await db.insert(students).values({
       userId: created.id, matricNumber, departmentId, programId, level, admissionYear,
     });
@@ -629,7 +629,7 @@ export async function createLecturer(form: FormData): Promise<ActionResult> {
     const [created] = await db.insert(users).values({
       email, fullName, role: "lecturer", status: "active", departmentId,
       passwordHash: hashPassword(password),
-    }).returning();
+    }).$returningId();
     await db.insert(lecturers).values({
       userId: created.id, staffNumber, departmentId, designation, qualification: qualification || null,
     });
@@ -652,7 +652,7 @@ export async function createAdminAccount(form: FormData): Promise<ActionResult> 
     if (duplicate.length) throw new Error("An account with this email already exists.");
     const [created] = await db.insert(users).values({
       email, fullName, role, status: "active", departmentId, passwordHash: hashPassword(password),
-    }).returning();
+    }).$returningId();
     await audit(user, "ADMIN_ACCOUNT_CREATED", "user", created.id, { email, role, departmentId }, departmentId);
   });
 }

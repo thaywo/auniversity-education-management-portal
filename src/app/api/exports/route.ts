@@ -44,7 +44,7 @@ export async function GET(request: Request) {
       const student = await getStudentContext(user.id);
       if (!student) return Response.json({ ok: false, message: "Student record not found." }, { status: 404 });
       const term = await getCurrentTerm();
-      const result = await db.execute(sql`
+      const [rows] = (await db.execute(sql`
         SELECT r.registered_at AS "Date", c.code AS "Course Code", c.title AS "Course Title",
           c.units AS "Units", c.level AS "Level", sem.name AS "Semester", ses.name AS "Session",
           COALESCE(u.full_name, 'Unallocated') AS "Lecturer"
@@ -57,14 +57,14 @@ export async function GET(request: Request) {
         LEFT JOIN users u ON u.id = l.user_id
         WHERE r.student_id = ${student.studentId} AND r.session_id = ${term.session.id} AND r.semester_id = ${term.semester.id}
         ORDER BY c.code
-      `);
-      return csvResponse(result.rows as CsvRow[], `UEMP-registration-${student.matricNumber.replace(/\//g, "-")}`);
+      `)) as unknown as [CsvRow[]];
+      return csvResponse(rows ?? [], `UEMP-registration-${student.matricNumber.replace(/\//g, "-")}`);
     }
 
     if (type === "results" && user.role === "student") {
       const student = await getStudentContext(user.id);
       if (!student) return Response.json({ ok: false, message: "Student record not found." }, { status: 404 });
-      const result = await db.execute(sql`
+      const [rows] = (await db.execute(sql`
         SELECT ses.name AS "Session", sem.name AS "Semester", c.code AS "Course Code",
           c.title AS "Course Title", c.units AS "Units", res.ca_score AS "CA (30)",
           res.exam_score AS "Exam (70)", res.total_score AS "Total (100)", res.grade AS "Grade",
@@ -76,8 +76,8 @@ export async function GET(request: Request) {
         JOIN semesters sem ON sem.id = c.semester_id
         WHERE res.student_id = ${student.studentId} AND res.status = 'approved'
         ORDER BY ses.name, sem.number, c.code
-      `);
-      return csvResponse(result.rows as CsvRow[], `UEMP-result-statement-${student.matricNumber.replace(/\//g, "-")}`);
+      `)) as unknown as [CsvRow[]];
+      return csvResponse(rows ?? [], `UEMP-result-statement-${student.matricNumber.replace(/\//g, "-")}`);
     }
 
     if (type === "class-list" && user.role === "lecturer") {
@@ -87,11 +87,11 @@ export async function GET(request: Request) {
       const allocation = await db.select({ id: courseAllocations.id }).from(courseAllocations)
         .where(and(eq(courseAllocations.courseId, courseId), eq(courseAllocations.lecturerId, lecturer.lecturerId))).limit(1);
       if (!allocation.length) return Response.json({ ok: false, message: "Forbidden: course not allocated to you." }, { status: 403 });
-      const result = await db.execute(sql`
+      const [rows] = (await db.execute(sql`
         SELECT s.matric_number AS "Matric Number", u.full_name AS "Student Name", s.level AS "Level",
           c.code AS "Course Code", c.title AS "Course Title", c.units AS "Units",
-          COALESCE(res.ca_score::text, '') AS "CA", COALESCE(res.exam_score::text, '') AS "Exam",
-          COALESCE(res.total_score::text, '') AS "Total", COALESCE(res.grade, '') AS "Grade"
+          COALESCE(CAST(res.ca_score AS CHAR), '') AS "CA", COALESCE(CAST(res.exam_score AS CHAR), '') AS "Exam",
+          COALESCE(CAST(res.total_score AS CHAR), '') AS "Total", COALESCE(res.grade, '') AS "Grade"
         FROM registrations r
         JOIN students s ON s.id = r.student_id
         JOIN users u ON u.id = s.user_id
@@ -99,8 +99,8 @@ export async function GET(request: Request) {
         LEFT JOIN results res ON res.registration_id = r.id
         WHERE r.course_id = ${courseId}
         ORDER BY s.matric_number
-      `);
-      return csvResponse(result.rows as CsvRow[], `UEMP-class-list-${courseId}`);
+      `)) as unknown as [CsvRow[]];
+      return csvResponse(rows ?? [], `UEMP-class-list-${courseId}`);
     }
 
     if (!["dept_admin", "super_admin"].includes(user.role)) {
@@ -111,7 +111,7 @@ export async function GET(request: Request) {
     }
 
     if (type === "students") {
-      const result = await db.execute(sql`
+      const [rows] = (await db.execute(sql`
         SELECT s.matric_number AS "Matric Number", u.full_name AS "Full Name", u.email AS "Email",
           d.name AS "Department", p.name AS "Program", s.level AS "Level",
           s.admission_year AS "Admission Year", u.status AS "Account Status"
@@ -121,12 +121,12 @@ export async function GET(request: Request) {
         JOIN programs p ON p.id = s.program_id
         WHERE 1 = 1 ${studentDeptClause}
         ORDER BY s.matric_number
-      `);
-      return csvResponse(result.rows as CsvRow[], "UEMP-student-list");
+      `)) as unknown as [CsvRow[]];
+      return csvResponse(rows ?? [], "UEMP-student-list");
     }
 
     if (type === "registrations") {
-      const result = await db.execute(sql`
+      const [rows] = (await db.execute(sql`
         SELECT ses.name AS "Session", sem.name AS "Semester", s.matric_number AS "Matric Number",
           u.full_name AS "Student", d.name AS "Department", c.code AS "Course Code",
           c.title AS "Course Title", c.units AS "Units", c.level AS "Level",
@@ -140,18 +140,18 @@ export async function GET(request: Request) {
         JOIN semesters sem ON sem.id = r.semester_id
         WHERE 1 = 1 ${deptClause}
         ORDER BY ses.name DESC, sem.number, c.code, s.matric_number
-      `);
-      return csvResponse(result.rows as CsvRow[], "UEMP-course-registration-report");
+      `)) as unknown as [CsvRow[]];
+      return csvResponse(rows ?? [], "UEMP-course-registration-report");
     }
 
     if (type === "performance") {
-      const result = await db.execute(sql`
+      const [rows] = (await db.execute(sql`
         SELECT ses.name AS "Session", sem.name AS "Semester", d.name AS "Department",
           c.code AS "Course Code", c.title AS "Course Title", c.units AS "Units",
-          COUNT(res.id)::int AS "Approved Results",
+          COUNT(res.id) AS "Approved Results",
           ROUND(AVG(res.total_score), 1) AS "Average Score",
-          COUNT(CASE WHEN res.total_score >= 40 THEN 1 END)::int AS "Passes",
-          COUNT(CASE WHEN res.total_score < 40 THEN 1 END)::int AS "Fails",
+          COUNT(CASE WHEN res.total_score >= 40 THEN 1 END) AS "Passes",
+          COUNT(CASE WHEN res.total_score < 40 THEN 1 END) AS "Fails",
           ROUND(100.0 * COUNT(CASE WHEN res.total_score >= 40 THEN 1 END) / NULLIF(COUNT(res.id), 0), 1) AS "Pass Rate %"
         FROM results res
         JOIN courses c ON c.id = res.course_id
@@ -161,19 +161,19 @@ export async function GET(request: Request) {
         WHERE res.status = 'approved' ${deptClause}
         GROUP BY ses.name, sem.name, d.name, c.code, c.title, c.units
         ORDER BY ses.name DESC, sem.name, c.code
-      `);
-      return csvResponse(result.rows as CsvRow[], "UEMP-academic-performance-report");
+      `)) as unknown as [CsvRow[]];
+      return csvResponse(rows ?? [], "UEMP-academic-performance-report");
     }
 
     if (type === "users" && user.role === "super_admin") {
-      const result = await db.execute(sql`
+      const [rows] = (await db.execute(sql`
         SELECT u.full_name AS "Full Name", u.email AS "Email", u.role AS "Role",
           u.status AS "Status", COALESCE(d.name, 'University-wide') AS "Department",
           u.last_login_at AS "Last Login", u.created_at AS "Created At"
         FROM users u LEFT JOIN departments d ON d.id = u.department_id
         ORDER BY u.role, u.full_name
-      `);
-      return csvResponse(result.rows as CsvRow[], "UEMP-user-accounts");
+      `)) as unknown as [CsvRow[]];
+      return csvResponse(rows ?? [], "UEMP-user-accounts");
     }
 
     return Response.json({ ok: false, message: "Unknown or unauthorized export type." }, { status: 400 });

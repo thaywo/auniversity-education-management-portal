@@ -33,21 +33,20 @@ async function runSeed() {
         departmentId: values.departmentId ?? null,
         status: values.status ?? "active",
         phone: values.phone ?? null,
-      }).returning();
-      return user;
+      }).$returningId();
+      return { id: user.id, ...values };
     };
 
-    const [science] = await tx.insert(faculties).values([
+    const [science, arts] = await tx.insert(faculties).values([
       { name: "Faculty of Science & Technology", code: "FST" },
       { name: "Faculty of Arts & Humanities", code: "FAH" },
-    ]).returning();
-    const arts = (await tx.select().from(faculties).where(eq(faculties.code, "FAH")))[0];
+    ]).$returningId();
 
     const insertedDepartments = await tx.insert(departments).values([
       { facultyId: science.id, name: "Computer Science", code: "CSC" },
       { facultyId: science.id, name: "Mathematics", code: "MTH" },
       { facultyId: arts.id, name: "English & Literary Studies", code: "ENG" },
-    ]).returning();
+    ]).$returningId();
     const cs = insertedDepartments[0];
     const maths = insertedDepartments[1];
     const english = insertedDepartments[2];
@@ -57,7 +56,7 @@ async function runSeed() {
       { departmentId: cs.id, name: "B.Sc. Information Technology", code: "IFT", degree: "B.Sc.", durationYears: 4 },
       { departmentId: maths.id, name: "B.Sc. Mathematics", code: "MTH", degree: "B.Sc.", durationYears: 4 },
       { departmentId: english.id, name: "B.A. English", code: "ENG", degree: "B.A.", durationYears: 4 },
-    ]).returning();
+    ]).$returningId();
     const csProgram = insertedPrograms[0];
     const mathsProgram = insertedPrograms[2];
 
@@ -69,16 +68,16 @@ async function runSeed() {
       );
     }
 
-    const [session] = await tx.insert(academicSessions).values([
+    const [session, previousSession] = await tx.insert(academicSessions).values([
       { name: "2025/2026", isCurrent: true },
       { name: "2024/2025", isCurrent: false },
-    ]).returning();
-    const previousSession = (await tx.select().from(academicSessions).where(eq(academicSessions.name, "2024/2025")))[0];
+    ]).$returningId();
+
     const insertedSemesters = await tx.insert(semesters).values([
       { sessionId: session.id, name: "First Semester", number: 1, isCurrent: true },
       { sessionId: session.id, name: "Second Semester", number: 2, isCurrent: false },
       { sessionId: previousSession.id, name: "First Semester", number: 1, isCurrent: false },
-    ]).returning();
+    ]).$returningId();
     const first = insertedSemesters[0];
     const second = insertedSemesters[1];
 
@@ -111,7 +110,7 @@ async function runSeed() {
       { userId: lecturer1User.id, staffNumber: "STAFF/CSC/001", departmentId: cs.id, designation: "Senior Lecturer", qualification: "PhD Computer Science" },
       { userId: lecturer2User.id, staffNumber: "STAFF/CSC/002", departmentId: cs.id, designation: "Lecturer I", qualification: "MSc Software Engineering" },
       { userId: mathsLecturerUser.id, staffNumber: "STAFF/MTH/001", departmentId: maths.id, designation: "Lecturer II", qualification: "PhD Mathematics" },
-    ]).returning();
+    ]).$returningId();
 
     const studentDefs = [
       { email: "amina@uemp.edu", name: "Amina Ibrahim", matric: "2023/CSC/001", dept: cs.id, program: csProgram.id, gender: "Female" },
@@ -120,7 +119,7 @@ async function runSeed() {
       { email: "musa@uemp.edu", name: "Musa Danjuma", matric: "2023/MTH/001", dept: maths.id, program: mathsProgram.id, gender: "Male" },
       { email: "suspended@uemp.edu", name: "Demo Suspended Student", matric: "2023/CSC/004", dept: cs.id, program: csProgram.id, gender: "Male", suspended: true },
     ];
-    const studentRows = [];
+    const studentRows: { id: number; matric: string }[] = [];
     for (const definition of studentDefs) {
       const user = await createUser({
         email: definition.email, fullName: definition.name, role: "student", password: pw.student,
@@ -130,8 +129,8 @@ async function runSeed() {
         userId: user.id, matricNumber: definition.matric, departmentId: definition.dept,
         programId: definition.program, level: 200, admissionYear: 2023,
         gender: definition.gender, address: "University Campus, Abuja", guardianPhone: "+234 803 000 0000",
-      }).returning();
-      studentRows.push(student);
+      }).$returningId();
+      studentRows.push({ id: student.id, matric: definition.matric });
     }
     const [amina, tolu, zara, musa] = studentRows;
 
@@ -145,14 +144,14 @@ async function runSeed() {
       { code: "CSC204", title: "Web Technologies", units: 2, level: 200, programId: csProgram.id, sem: second.id, lecturer: lec2.id },
       { code: "MTH211", title: "Linear Algebra II", units: 3, level: 200, programId: mathsProgram.id, sem: first.id, lecturer: lecMath.id },
     ];
-    const courseRows = [];
+    const courseRows: { id: number; code: string; semesterId: number }[] = [];
     for (const course of courseDefs) {
       const departmentId = course.code === "MTH211" ? maths.id : cs.id;
       const [row] = await tx.insert(courses).values({
         code: course.code, title: course.title, units: course.units, level: course.level,
         departmentId, programId: course.programId, semesterId: course.sem, sessionId: session.id,
-      }).returning();
-      courseRows.push(row);
+      }).$returningId();
+      courseRows.push({ id: row.id, code: course.code, semesterId: course.sem });
       await tx.insert(courseAllocations).values({ courseId: row.id, lecturerId: course.lecturer, sessionId: session.id });
     }
     const [csc201, csc203, csc205, mth201, gst201] = courseRows;
@@ -163,13 +162,13 @@ async function runSeed() {
       [zara, [csc201, csc203, csc205]],
       [musa, [courseRows[7]]],
     ] as const;
-    const registrationRows: RegistrationRow[] = [];
+    const registrationRows: { id: number; studentId: number; courseId: number }[] = [];
     for (const [student, studentCourses] of registrationDefs) {
       for (const course of studentCourses) {
         const [registration] = await tx.insert(registrations).values({
           studentId: student.id, courseId: course.id, sessionId: session.id, semesterId: course.semesterId,
-        }).returning();
-        registrationRows.push(registration);
+        }).$returningId();
+        registrationRows.push({ id: registration.id, studentId: student.id, courseId: course.id });
       }
     }
     const regIdFor = (studentId: number, courseId: number) =>
@@ -191,7 +190,7 @@ async function runSeed() {
       semesterId: first.id, status: "approved", feedback: "Verified and approved for publication.",
       submittedAt: new Date(Date.now() - 4 * 86400000), reviewedAt: new Date(Date.now() - 2 * 86400000),
       reviewedBy: csAdmin.id,
-    }).returning();
+    }).$returningId();
     await tx.insert(results).values([
       { registrationId: regIdFor(amina.id, csc201.id), courseId: csc201.id, studentId: amina.id, caScore: 26, examScore: 62, totalScore: 88, grade: "A", gradePoint: 5, status: "approved", enteredBy: lecturer1User.id, approvedBy: csAdmin.id, submittedAt: new Date(Date.now() - 4 * 86400000), approvedAt: new Date(Date.now() - 2 * 86400000) },
       { registrationId: regIdFor(tolu.id, csc201.id), courseId: csc201.id, studentId: tolu.id, caScore: 22, examScore: 49, totalScore: 71, grade: "A", gradePoint: 5, status: "approved", enteredBy: lecturer1User.id, approvedBy: csAdmin.id, submittedAt: new Date(Date.now() - 4 * 86400000), approvedAt: new Date(Date.now() - 2 * 86400000) },
@@ -202,7 +201,7 @@ async function runSeed() {
     const [pendingSubmission] = await tx.insert(resultSubmissions).values({
       courseId: csc203.id, lecturerId: lec1.id, departmentId: cs.id, sessionId: session.id,
       semesterId: first.id, status: "submitted", submittedAt: new Date(Date.now() - 86400000),
-    }).returning();
+    }).$returningId();
     await tx.insert(results).values([
       { registrationId: regIdFor(amina.id, csc203.id), courseId: csc203.id, studentId: amina.id, caScore: 25, examScore: 55, totalScore: 80, grade: "A", gradePoint: 5, status: "submitted", enteredBy: lecturer1User.id, submittedAt: new Date(Date.now() - 86400000) },
       { registrationId: regIdFor(tolu.id, csc203.id), courseId: csc203.id, studentId: tolu.id, caScore: 21, examScore: 44, totalScore: 65, grade: "B", gradePoint: 4, status: "submitted", enteredBy: lecturer1User.id, submittedAt: new Date(Date.now() - 86400000) },
@@ -213,7 +212,7 @@ async function runSeed() {
     const [draftSubmission] = await tx.insert(resultSubmissions).values({
       courseId: csc205.id, lecturerId: lec2.id, departmentId: cs.id, sessionId: session.id,
       semesterId: first.id, status: "draft",
-    }).returning();
+    }).$returningId();
     await tx.insert(results).values([
       { registrationId: regIdFor(tolu.id, csc205.id), courseId: csc205.id, studentId: tolu.id, caScore: 24, examScore: 51, totalScore: 75, grade: "A", gradePoint: 5, status: "draft", enteredBy: lecturer2User.id },
       { registrationId: regIdFor(zara.id, csc205.id), courseId: csc205.id, studentId: zara.id, caScore: 19, examScore: 42, totalScore: 61, grade: "B", gradePoint: 4, status: "draft", enteredBy: lecturer2User.id },
@@ -225,7 +224,7 @@ async function runSeed() {
       semesterId: first.id, status: "returned", feedback: "Please recheck the CA score for Tolu Adewale and resubmit.",
       submittedAt: new Date(Date.now() - 3 * 86400000), reviewedAt: new Date(Date.now() - 2 * 86400000),
       reviewedBy: csAdmin.id,
-    }).returning();
+    }).$returningId();
     await tx.insert(results).values([
       { registrationId: regIdFor(amina.id, mth201.id), courseId: mth201.id, studentId: amina.id, caScore: 23, examScore: 47, totalScore: 70, grade: "A", gradePoint: 5, status: "returned", enteredBy: lecturer2User.id },
       { registrationId: regIdFor(tolu.id, mth201.id), courseId: mth201.id, studentId: tolu.id, caScore: 21, examScore: 40, totalScore: 61, grade: "B", gradePoint: 4, status: "returned", enteredBy: lecturer2User.id },
@@ -260,9 +259,8 @@ export function ensureSeeded(): Promise<void> {
     seedPromise = (async () => {
       const marker = await db.select().from(appMeta).where(eq(appMeta.key, SEED_KEY)).limit(1);
       if (marker[0]?.value === "complete") return;
-      const claimed = await db.insert(appMeta).values({ key: SEED_KEY, value: "running" })
-        .onConflictDoNothing().returning({ key: appMeta.key });
-      if (claimed.length === 0) return;
+      const [claimed] = await db.insert(appMeta).ignore().values({ key: SEED_KEY, value: "running" });
+      if (claimed.affectedRows === 0) return;
       try {
         await runSeed();
         await db.update(appMeta).set({ value: "complete" }).where(eq(appMeta.key, SEED_KEY));
