@@ -201,7 +201,7 @@ users ──< audit_logs     role_permissions (role × permission)     grading_s
 npm install
 
 # 2. Configure .env with your MySQL connection string
-DATABASE_URL="mysql://root:%40T25r5s540@127.0.0.1:3306/auniversity_portal"
+DATABASE_URL="mysql://root:password@127.0.0.1:3306/auniversity_portal"
 
 # 3. Apply schema to MySQL database via Drizzle Kit
 npx drizzle-kit push

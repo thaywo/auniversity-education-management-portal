@@ -153,7 +153,7 @@ npm install
 ### Step 2: Configure Environment Variables
 Create a `.env` file in the root directory:
 ```env
-DATABASE_URL="mysql://root:%40T25r5s540@127.0.0.1:3306/auniversity_portal"
+DATABASE_URL="mysql://root:password@127.0.0.1:3306/auniversity_portal"
 ```
 *(Replace `root` and password with your MySQL credentials. Note: special characters like `@` in passwords must be URL-encoded, e.g. `%40`)*.
 
