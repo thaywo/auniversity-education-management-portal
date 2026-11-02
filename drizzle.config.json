@@ -1,0 +1,7 @@
+{
+  "dialect": "mysql",
+  "schema": "./src/db/schema.ts",
+  "dbCredentials": {
+    "url": "mysql://root:%40T25r5s540@127.0.0.1:3306/auniversity_portal"
+  }
+}
